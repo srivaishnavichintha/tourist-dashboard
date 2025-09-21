@@ -12,39 +12,49 @@ const Safetymap = () => {
   const mapContainer = useRef(null);
   const map = useRef(null);
 
-  // Using a free weather API that doesn't require a key
   const WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast";
 
   // Online/offline detection
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
-
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
-
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
   }, []);
 
-  // Get user location
+  // Get high-accuracy user location
   useEffect(() => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          setLocation({
+          const loc = {
             latitude: pos.coords.latitude,
             longitude: pos.coords.longitude,
-          });
+            accuracy: pos.coords.accuracy,
+          };
+          setLocation(loc);
+          // Save last location for offline use
+          localStorage.setItem("lastLocation", JSON.stringify(loc));
         },
-        (err) => setError(err.message)
+        (err) => setError(err.message),
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
       );
     } else {
       setError("Geolocation not supported by your browser");
     }
   }, []);
+
+  // Load last location from localStorage when offline
+  useEffect(() => {
+    if (!isOnline) {
+      const lastLoc = localStorage.getItem("lastLocation");
+      if (lastLoc) setLocation(JSON.parse(lastLoc));
+    }
+  }, [isOnline]);
 
   // Initialize MapLibre map
   useEffect(() => {
@@ -76,7 +86,6 @@ const Safetymap = () => {
         zoom: 12,
       });
 
-      // Add marker at user location
       new maplibregl.Marker()
         .setLngLat([location.longitude, location.latitude])
         .addTo(map.current);
@@ -87,53 +96,40 @@ const Safetymap = () => {
 
   // Fetch online weather
   useEffect(() => {
-    if (!isOnline || !location) return;
+    if (!location) return;
 
     const fetchWeather = async () => {
+      if (!isOnline) {
+        // Load last weather from localStorage
+        const lastWeather = localStorage.getItem("lastWeather");
+        if (lastWeather) setWeather(JSON.parse(lastWeather));
+        return;
+      }
+
       setWeatherLoading(true);
       try {
-        // Using Open-Meteo API (free, no API key required)
         const params = new URLSearchParams({
           latitude: location.latitude.toString(),
           longitude: location.longitude.toString(),
-          current: 'temperature_2m,relative_humidity_2m,weather_code',
-          timezone: 'auto'
+          current_weather: "true",
+          timezone: "auto",
         });
-        
+
         const res = await fetch(`${WEATHER_API_URL}?${params}`);
-        
-        if (!res.ok) {
-          throw new Error(`Weather API error: ${res.status}`);
-        }
-        
+        if (!res.ok) throw new Error(`Weather API error: ${res.status}`);
         const data = await res.json();
-        
-        // Transform the data to match our expected format
-        if (data.current) {
-          setWeather({
-            name: 'Current Location',
-            main: {
-              temp: Math.round(data.current.temperature_2m),
-              humidity: data.current.relative_humidity_2m
-            },
-            weather: [{
-              description: getWeatherDescription(data.current.weather_code)
-            }]
-          });
+
+        if (data.current_weather) {
+          const weatherData = {
+            temp: data.current_weather.temperature,
+            wind: data.current_weather.windspeed,
+            weatherCode: data.current_weather.weathercode,
+          };
+          setWeather(weatherData);
+          localStorage.setItem("lastWeather", JSON.stringify(weatherData));
         }
       } catch (err) {
-        console.log("Weather fetch error:", err.message);
-        // Set fallback weather data
-        setWeather({
-          name: 'Current Location',
-          main: {
-            temp: 'N/A',
-            humidity: 'N/A'
-          },
-          weather: [{
-            description: 'Weather data unavailable'
-          }]
-        });
+        console.error("Weather fetch error:", err.message);
       } finally {
         setWeatherLoading(false);
       }
@@ -142,35 +138,34 @@ const Safetymap = () => {
     fetchWeather();
   }, [isOnline, location]);
 
-  // Helper function to convert weather codes to descriptions
   const getWeatherDescription = (code) => {
-    const weatherCodes = {
-      0: 'Clear sky',
-      1: 'Mainly clear',
-      2: 'Partly cloudy',
-      3: 'Overcast',
-      45: 'Fog',
-      48: 'Depositing rime fog',
-      51: 'Light drizzle',
-      53: 'Moderate drizzle',
-      55: 'Dense drizzle',
-      61: 'Slight rain',
-      63: 'Moderate rain',
-      65: 'Heavy rain',
-      71: 'Slight snow fall',
-      73: 'Moderate snow fall',
-      75: 'Heavy snow fall',
-      77: 'Snow grains',
-      80: 'Slight rain showers',
-      81: 'Moderate rain showers',
-      82: 'Violent rain showers',
-      85: 'Slight snow showers',
-      86: 'Heavy snow showers',
-      95: 'Thunderstorm',
-      96: 'Thunderstorm with slight hail',
-      99: 'Thunderstorm with heavy hail'
+    const codes = {
+      0: "Clear sky",
+      1: "Mainly clear",
+      2: "Partly cloudy",
+      3: "Overcast",
+      45: "Fog",
+      48: "Depositing rime fog",
+      51: "Light drizzle",
+      53: "Moderate drizzle",
+      55: "Dense drizzle",
+      61: "Slight rain",
+      63: "Moderate rain",
+      65: "Heavy rain",
+      71: "Slight snow fall",
+      73: "Moderate snow fall",
+      75: "Heavy snow fall",
+      77: "Snow grains",
+      80: "Slight rain showers",
+      81: "Moderate rain showers",
+      82: "Violent rain showers",
+      85: "Slight snow showers",
+      86: "Heavy snow showers",
+      95: "Thunderstorm",
+      96: "Thunderstorm with slight hail",
+      99: "Thunderstorm with heavy hail",
     };
-    return weatherCodes[code] || 'Unknown';
+    return codes[code] || "Unknown";
   };
 
   return (
@@ -182,26 +177,24 @@ const Safetymap = () => {
         <div>
           <p>Latitude: {location.latitude.toFixed(6)}</p>
           <p>Longitude: {location.longitude.toFixed(6)}</p>
+          <p>Accuracy: ±{location.accuracy} m</p>
         </div>
       )}
 
-      {isOnline && (
-        <div className="weather-box">
-          <h3>Weather Details</h3>
-          {weatherLoading ? (
-            <p>Loading weather data...</p>
-          ) : weather ? (
-            <>
-              <p>Location: {weather.name}</p>
-              <p>Temperature: {weather.main.temp}°C</p>
-              <p>Humidity: {weather.main.humidity}%</p>
-              <p>Condition: {weather.weather[0].description}</p>
-            </>
-          ) : (
-            <p>Weather data not available</p>
-          )}
-        </div>
-      )}
+      <div className="weather-box">
+        <h3>Weather Details</h3>
+        {weatherLoading ? (
+          <p>Loading weather data...</p>
+        ) : weather ? (
+          <>
+            <p>Temperature: {weather.temp}°C</p>
+            <p>Wind: {weather.wind} km/h</p>
+            <p>Condition: {getWeatherDescription(weather.weatherCode)}</p>
+          </>
+        ) : (
+          <p>Weather data unavailable</p>
+        )}
+      </div>
 
       {isOnline ? (
         <div
@@ -212,17 +205,7 @@ const Safetymap = () => {
       ) : (
         <div className="offline-box">
           <h3>Offline Mode</h3>
-          <p>Map not available.</p>
-          {weather ? (
-            <div>
-              <p>Last known weather:</p>
-              <p>Temperature: {weather.main.temp}°C</p>
-              <p>Humidity: {weather.main.humidity}%</p>
-              <p>Condition: {weather.weather[0].description}</p>
-            </div>
-          ) : (
-            <p>Weather data not available offline.</p>
-          )}
+          <p>Map not available offline.</p>
         </div>
       )}
     </div>
