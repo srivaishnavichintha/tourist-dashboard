@@ -1,0 +1,141 @@
+
+.tourist-app {
+  font-family: sans-serif;
+  background: #fff;
+  color: #222;
+  padding: 2rem;
+  width: 100%;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+
+.nav-header {
+  text-align: center;
+  position: relative;
+}
+
+.battery-wifi {
+  position: absolute;
+  top: 0;
+  right: 1rem;
+  font-size: 0.85rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.main-container {
+  max-width: 1200px;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+
+.card {
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #f9f9f9;
+}
+
+.safe {
+  border-color: #00b894;
+  background: #e0f7f1;
+}
+
+.danger {
+  border-color: #e17055;
+  background: #fdecea;
+}
+
+.card-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: bold;
+  margin-bottom: 0.5rem;
+}
+
+.badge {
+  padding: 0.2rem 0.5rem;
+  border-radius: 5px;
+  font-size: 0.85rem;
+}
+
+.badge-safe {
+  background-color: #00b894;
+  color: white;
+}
+
+.badge-danger {
+  background-color: #e17055;
+  color: white;
+}
+
+progress {
+  width: 100%;
+  height: 10px;
+  margin-bottom: 0.5rem;
+}
+
+.muted-text {
+  color: #777;
+  font-size: 0.85rem;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.btn-danger {
+  background-color: #e74c3c;
+  color: white;
+  border: none;
+  padding: 1rem;
+  font-weight: bold;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-outline {
+  border: 2px solid #00b894;
+  color: #00b894;
+  background: transparent;
+  padding: 1rem;
+  font-weight: bold;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.quick-actions .action {
+  text-align: center;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+
+.quick-actions .action:hover {
+  box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+.alert {
+  padding: 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.alert-danger {
+  background-color: #fdecea;
+  border: 1px solid #e17055;
+  color: #c0392b;
+}
+
+.service {
+  margin-top: 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+}
