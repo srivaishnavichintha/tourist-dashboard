@@ -12,13 +12,21 @@ const Safetymap = () => {
   const [weather, setWeather] = useState(null);
   const [weatherError, setWeatherError] = useState(null);
   const [watchId, setWatchId] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [isMapInitialized, setIsMapInitialized] = useState(false);
   const mapContainer = useRef(null);
   const map = useRef(null);
   const marker = useRef(null);
 
   // Online/offline detection
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
+    const handleOnline = () => {
+      setIsOnline(true);
+      // Try to fetch weather when coming back online
+      if (location) {
+        fetchWeatherData(location.latitude, location.longitude);
+      }
+    };
     const handleOffline = () => setIsOnline(false);
 
     window.addEventListener('online', handleOnline);
@@ -28,7 +36,7 @@ const Safetymap = () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [location]);
 
   // Get user location with high accuracy
   const getLocation = (highAccuracy = true) => {
@@ -48,7 +56,7 @@ const Safetymap = () => {
 
     const options = {
       enableHighAccuracy: highAccuracy,
-      timeout: 10000,
+      timeout: highAccuracy ? 10000 : 15000, // Longer timeout for standard accuracy
       maximumAge: 0 // Always get a fresh location
     };
 
@@ -61,6 +69,7 @@ const Safetymap = () => {
         
         setLocation(newLocation);
         setAccuracy(position.coords.accuracy);
+        setLastUpdated(new Date());
         setIsLoading(false);
         
         // Update map if it exists
@@ -69,6 +78,9 @@ const Safetymap = () => {
           if (marker.current) {
             marker.current.setLngLat([newLocation.longitude, newLocation.latitude]);
           }
+        } else if (mapContainer.current && !isMapInitialized) {
+          // Initialize map if not already done
+          initializeMap(newLocation);
         }
       },
       (err) => {
@@ -85,6 +97,61 @@ const Safetymap = () => {
     );
 
     setWatchId(newWatchId);
+  };
+
+  // Initialize MapLibre map
+  const initializeMap = (loc) => {
+    if (!mapContainer.current || map.current) return;
+    
+    try {
+      map.current = new maplibregl.Map({
+        container: mapContainer.current,
+        style: {
+          version: 8,
+          sources: {
+            'raster-tiles': {
+              type: 'raster',
+              tiles: isOnline ? [
+                'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+              ] : [],
+              tileSize: 256,
+              attribution: '© OpenStreetMap contributors'
+            },
+          },
+          layers: [
+            {
+              id: 'osm-tiles',
+              type: 'raster',
+              source: 'raster-tiles',
+              minzoom: 0,
+              maxzoom: 19,
+            },
+          ],
+        },
+        center: [loc.longitude, loc.latitude],
+        zoom: 15,
+      });
+
+      // Add marker at user location
+      marker.current = new maplibregl.Marker({
+        color: '#FF0000',
+        draggable: false
+      })
+        .setLngLat([loc.longitude, loc.latitude])
+        .addTo(map.current);
+
+      map.current.addControl(new maplibregl.NavigationControl());
+      setIsMapInitialized(true);
+      
+      // Handle map load errors (especially when offline)
+      map.current.on('error', (e) => {
+        console.warn('Map error:', e.error);
+      });
+    } catch (mapError) {
+      console.error('Failed to initialize map:', mapError);
+    }
   };
 
   // Get weather data using Open-Meteo API
@@ -123,57 +190,12 @@ const Safetymap = () => {
     };
   }, []);
 
-  // Fetch weather when location changes
+  // Fetch weather when location changes and online
   useEffect(() => {
     if (location && isOnline) {
       fetchWeatherData(location.latitude, location.longitude);
     }
   }, [location, isOnline]);
-
-  // Initialize MapLibre map
-  useEffect(() => {
-    if (location && mapContainer.current && !map.current) {
-      map.current = new maplibregl.Map({
-        container: mapContainer.current,
-        style: {
-          version: 8,
-          sources: {
-            'raster-tiles': {
-              type: 'raster',
-              tiles: [
-                'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
-              ],
-              tileSize: 256,
-              attribution: '© OpenStreetMap contributors'
-            },
-          },
-          layers: [
-            {
-              id: 'osm-tiles',
-              type: 'raster',
-              source: 'raster-tiles',
-              minzoom: 0,
-              maxzoom: 19,
-            },
-          ],
-        },
-        center: [location.longitude, location.latitude],
-        zoom: 15,
-      });
-
-      // Add marker at user location
-      marker.current = new maplibregl.Marker({
-        color: '#FF0000',
-        draggable: false
-      })
-        .setLngLat([location.longitude, location.latitude])
-        .addTo(map.current);
-
-      map.current.addControl(new maplibregl.NavigationControl());
-    }
-  }, [location]);
 
   // Weather code to description mapping
   const getWeatherDescription = (code) => {
@@ -223,7 +245,7 @@ const Safetymap = () => {
       {isLoading && (
         <div className="loading">
           <div className="spinner"></div>
-          <p>Getting your location with high accuracy...</p>
+          <p>Getting your location...</p>
         </div>
       )}
 
@@ -251,14 +273,25 @@ const Safetymap = () => {
                 <span className="value">±{accuracy.toFixed(2)} meters</span>
               </div>
             )}
+            {lastUpdated && (
+              <div className="coordinate">
+                <span className="label">Last Updated:</span>
+                <span className="value">{lastUpdated.toLocaleTimeString()}</span>
+              </div>
+            )}
           </div>
           <button onClick={() => getLocation()} className="refresh-btn">
             Refresh Location
           </button>
+          {!isOnline && (
+            <div className="offline-note">
+              <p>📍 GPS works offline, but maps require internet connection</p>
+            </div>
+          )}
         </div>
       )}
 
-      {weather && (
+      {weather && isOnline && (
         <div className="weather-info">
           <h2>Current Weather</h2>
           <div className="weather-data">
@@ -293,6 +326,12 @@ const Safetymap = () => {
         className="map-container"
         style={{ display: location ? 'block' : 'none' }}
       />
+      
+      {!isOnline && location && (
+        <div className="offline-map-message">
+          <p>Map unavailable offline. Coordinates still accurate: {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}</p>
+        </div>
+      )}
 
       {!location && !isLoading && (
         <div className="no-location">
@@ -307,9 +346,11 @@ const Safetymap = () => {
         <h3>Location Accuracy Tips</h3>
         <ul>
           <li>Make sure you've granted location permissions to your browser</li>
+          <li>GPS works offline but requires clear view of the sky</li>
+          <li>For better accuracy, enable "High Accuracy" mode in your device settings</li>
           <li>Try using a different browser (Chrome usually has the best geolocation support)</li>
           <li>Ensure your device's location services are turned on</li>
-          <li>For better accuracy, connect to WiFi or ensure good cellular signal</li>
+          <li>For better accuracy when online, connect to WiFi or ensure good cellular signal</li>
           <li>GPS works best outdoors with a clear view of the sky</li>
         </ul>
       </div>
