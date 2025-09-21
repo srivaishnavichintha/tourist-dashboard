@@ -26,29 +26,31 @@ const Safetymap = () => {
     };
   }, []);
 
-  // Get high-accuracy user location
+  // Track user location continuously
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const loc = {
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-          };
-          setLocation(loc);
-          // Save last location for offline use
-          localStorage.setItem("lastLocation", JSON.stringify(loc));
-        },
-        (err) => setError(err.message),
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-      );
-    } else {
+    if (!navigator.geolocation) {
       setError("Geolocation not supported by your browser");
+      return;
     }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const loc = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        };
+        setLocation(loc);
+        localStorage.setItem("lastLocation", JSON.stringify(loc));
+      },
+      (err) => setError(err.message),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
-  // Load last location from localStorage when offline
+  // Load last location when offline
   useEffect(() => {
     if (!isOnline) {
       const lastLoc = localStorage.getItem("lastLocation");
@@ -56,9 +58,11 @@ const Safetymap = () => {
     }
   }, [isOnline]);
 
-  // Initialize MapLibre map
+  // Initialize or update map
   useEffect(() => {
-    if (isOnline && location && mapContainer.current && !map.current) {
+    if (!location || !mapContainer.current) return;
+
+    if (!map.current) {
       map.current = new maplibregl.Map({
         container: mapContainer.current,
         style: {
@@ -86,21 +90,25 @@ const Safetymap = () => {
         zoom: 12,
       });
 
-      new maplibregl.Marker()
-        .setLngLat([location.longitude, location.latitude])
-        .addTo(map.current);
-
       map.current.addControl(new maplibregl.NavigationControl());
+    } else {
+      map.current.setCenter([location.longitude, location.latitude]);
     }
-  }, [isOnline, location]);
 
-  // Fetch online weather
+    // Remove existing markers and add a new one
+    if (map.current._markers) map.current._markers.forEach((m) => m.remove());
+    const marker = new maplibregl.Marker()
+      .setLngLat([location.longitude, location.latitude])
+      .addTo(map.current);
+    map.current._markers = [marker];
+  }, [location]);
+
+  // Fetch weather online or load last known
   useEffect(() => {
     if (!location) return;
 
     const fetchWeather = async () => {
       if (!isOnline) {
-        // Load last weather from localStorage
         const lastWeather = localStorage.getItem("lastWeather");
         if (lastWeather) setWeather(JSON.parse(lastWeather));
         return;
@@ -178,6 +186,11 @@ const Safetymap = () => {
           <p>Latitude: {location.latitude.toFixed(6)}</p>
           <p>Longitude: {location.longitude.toFixed(6)}</p>
           <p>Accuracy: ±{location.accuracy} m</p>
+          {location.accuracy > 50 && (
+            <p style={{ color: "orange" }}>
+              Warning: Location may be inaccurate
+            </p>
+          )}
         </div>
       )}
 
