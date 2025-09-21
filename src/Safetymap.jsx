@@ -1,226 +1,318 @@
-import React, { useState, useEffect, useRef } from "react";
-import maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
-import "./Safetymap.css";
+import React, { useState, useEffect, useRef } from 'react';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import './Safetymap.css';
 
 const Safetymap = () => {
   const [location, setLocation] = useState(null);
   const [error, setError] = useState(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isLoading, setIsLoading] = useState(true);
+  const [accuracy, setAccuracy] = useState(null);
   const [weather, setWeather] = useState(null);
-  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState(null);
+  const [watchId, setWatchId] = useState(null);
   const mapContainer = useRef(null);
   const map = useRef(null);
-
-  const WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast";
+  const marker = useRef(null);
 
   // Online/offline detection
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
     return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
-  // Track user location continuously
-  useEffect(() => {
+  // Get user location with high accuracy
+  const getLocation = (highAccuracy = true) => {
     if (!navigator.geolocation) {
-      setError("Geolocation not supported by your browser");
+      setError('Geolocation is not supported by your browser');
+      setIsLoading(false);
       return;
     }
 
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const loc = {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
+    setIsLoading(true);
+    setError(null);
+
+    // Clear any existing watcher
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+    }
+
+    const options = {
+      enableHighAccuracy: highAccuracy,
+      timeout: 10000,
+      maximumAge: 0 // Always get a fresh location
+    };
+
+    const newWatchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const newLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
         };
-        setLocation(loc);
-        localStorage.setItem("lastLocation", JSON.stringify(loc));
+        
+        setLocation(newLocation);
+        setAccuracy(position.coords.accuracy);
+        setIsLoading(false);
+        
+        // Update map if it exists
+        if (map.current) {
+          map.current.setCenter([newLocation.longitude, newLocation.latitude]);
+          if (marker.current) {
+            marker.current.setLngLat([newLocation.longitude, newLocation.latitude]);
+          }
+        }
       },
-      (err) => setError(err.message),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      (err) => {
+        setError(`Error getting location: ${err.message}`);
+        setIsLoading(false);
+        
+        // Try with lower accuracy if high accuracy failed
+        if (highAccuracy && err.code === err.TIMEOUT) {
+          setError('High accuracy location timed out. Trying with standard accuracy...');
+          setTimeout(() => getLocation(false), 1000);
+        }
+      },
+      options
     );
 
-    return () => navigator.geolocation.clearWatch(watchId);
+    setWatchId(newWatchId);
+  };
+
+  // Get weather data using Open-Meteo API
+  const fetchWeatherData = async (lat, lng) => {
+    if (!isOnline) {
+      setWeatherError('Cannot fetch weather data while offline');
+      return;
+    }
+
+    try {
+      setWeatherError(null);
+      const response = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true&temperature_unit=celsius&windspeed_unit=kmh`
+      );
+      
+      if (!response.ok) {
+        throw new Error(`Weather API error: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      setWeather(data.current_weather);
+    } catch (err) {
+      console.error('Weather fetch error:', err.message);
+      setWeatherError(err.message);
+    }
+  };
+
+  // Get location on component mount
+  useEffect(() => {
+    getLocation();
+    
+    return () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
   }, []);
 
-  // Load last location when offline
+  // Fetch weather when location changes
   useEffect(() => {
-    if (!isOnline) {
-      const lastLoc = localStorage.getItem("lastLocation");
-      if (lastLoc) setLocation(JSON.parse(lastLoc));
+    if (location && isOnline) {
+      fetchWeatherData(location.latitude, location.longitude);
     }
-  }, [isOnline]);
+  }, [location, isOnline]);
 
-  // Initialize or update map
+  // Initialize MapLibre map
   useEffect(() => {
-    if (!location || !mapContainer.current) return;
-
-    if (!map.current) {
+    if (location && mapContainer.current && !map.current) {
       map.current = new maplibregl.Map({
         container: mapContainer.current,
         style: {
           version: 8,
           sources: {
-            "raster-tiles": {
-              type: "raster",
-              tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+            'raster-tiles': {
+              type: 'raster',
+              tiles: [
+                'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+              ],
               tileSize: 256,
-              attribution:
-                '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+              attribution: '© OpenStreetMap contributors'
             },
           },
           layers: [
             {
-              id: "osm-tiles",
-              type: "raster",
-              source: "raster-tiles",
+              id: 'osm-tiles',
+              type: 'raster',
+              source: 'raster-tiles',
               minzoom: 0,
               maxzoom: 19,
             },
           ],
         },
         center: [location.longitude, location.latitude],
-        zoom: 12,
+        zoom: 15,
       });
 
-      map.current.addControl(new maplibregl.NavigationControl());
-    } else {
-      map.current.setCenter([location.longitude, location.latitude]);
-    }
+      // Add marker at user location
+      marker.current = new maplibregl.Marker({
+        color: '#FF0000',
+        draggable: false
+      })
+        .setLngLat([location.longitude, location.latitude])
+        .addTo(map.current);
 
-    // Remove existing markers and add a new one
-    if (map.current._markers) map.current._markers.forEach((m) => m.remove());
-    const marker = new maplibregl.Marker()
-      .setLngLat([location.longitude, location.latitude])
-      .addTo(map.current);
-    map.current._markers = [marker];
+      map.current.addControl(new maplibregl.NavigationControl());
+    }
   }, [location]);
 
-  // Fetch weather online or load last known
-  useEffect(() => {
-    if (!location) return;
-
-    const fetchWeather = async () => {
-      if (!isOnline) {
-        const lastWeather = localStorage.getItem("lastWeather");
-        if (lastWeather) setWeather(JSON.parse(lastWeather));
-        return;
-      }
-
-      setWeatherLoading(true);
-      try {
-        const params = new URLSearchParams({
-          latitude: location.latitude.toString(),
-          longitude: location.longitude.toString(),
-          current_weather: "true",
-          timezone: "auto",
-        });
-
-        const res = await fetch(`${WEATHER_API_URL}?${params}`);
-        if (!res.ok) throw new Error(`Weather API error: ${res.status}`);
-        const data = await res.json();
-
-        if (data.current_weather) {
-          const weatherData = {
-            temp: data.current_weather.temperature,
-            wind: data.current_weather.windspeed,
-            weatherCode: data.current_weather.weathercode,
-          };
-          setWeather(weatherData);
-          localStorage.setItem("lastWeather", JSON.stringify(weatherData));
-        }
-      } catch (err) {
-        console.error("Weather fetch error:", err.message);
-      } finally {
-        setWeatherLoading(false);
-      }
-    };
-
-    fetchWeather();
-  }, [isOnline, location]);
-
+  // Weather code to description mapping
   const getWeatherDescription = (code) => {
-    const codes = {
-      0: "Clear sky",
-      1: "Mainly clear",
-      2: "Partly cloudy",
-      3: "Overcast",
-      45: "Fog",
-      48: "Depositing rime fog",
-      51: "Light drizzle",
-      53: "Moderate drizzle",
-      55: "Dense drizzle",
-      61: "Slight rain",
-      63: "Moderate rain",
-      65: "Heavy rain",
-      71: "Slight snow fall",
-      73: "Moderate snow fall",
-      75: "Heavy snow fall",
-      77: "Snow grains",
-      80: "Slight rain showers",
-      81: "Moderate rain showers",
-      82: "Violent rain showers",
-      85: "Slight snow showers",
-      86: "Heavy snow showers",
-      95: "Thunderstorm",
-      96: "Thunderstorm with slight hail",
-      99: "Thunderstorm with heavy hail",
+    const weatherCodes = {
+      0: 'Clear sky',
+      1: 'Mainly clear',
+      2: 'Partly cloudy',
+      3: 'Overcast',
+      45: 'Fog',
+      48: 'Depositing rime fog',
+      51: 'Light drizzle',
+      53: 'Moderate drizzle',
+      55: 'Dense drizzle',
+      56: 'Light freezing drizzle',
+      57: 'Dense freezing drizzle',
+      61: 'Slight rain',
+      63: 'Moderate rain',
+      65: 'Heavy rain',
+      66: 'Light freezing rain',
+      67: 'Heavy freezing rain',
+      71: 'Slight snow fall',
+      73: 'Moderate snow fall',
+      75: 'Heavy snow fall',
+      77: 'Snow grains',
+      80: 'Slight rain showers',
+      81: 'Moderate rain showers',
+      82: 'Violent rain showers',
+      85: 'Slight snow showers',
+      86: 'Heavy snow showers',
+      95: 'Thunderstorm',
+      96: 'Thunderstorm with slight hail',
+      99: 'Thunderstorm with heavy hail'
     };
-    return codes[code] || "Unknown";
+    
+    return weatherCodes[code] || 'Unknown weather condition';
   };
 
   return (
-    <div>
-      <h1>Location Tracker</h1>
-      {error && <p style={{ color: "red" }}>{error}</p>}
-
-      {location && (
-        <div>
-          <p>Latitude: {location.latitude.toFixed(6)}</p>
-          <p>Longitude: {location.longitude.toFixed(6)}</p>
-          <p>Accuracy: ±{location.accuracy} m</p>
-          {location.accuracy > 50 && (
-            <p style={{ color: "orange" }}>
-              Warning: Location may be inaccurate
-            </p>
-          )}
+    <div className="location-tracker">
+      <div className="header">
+        <h1>Location & Weather Tracker</h1>
+        <div className={`status ${isOnline ? 'online' : 'offline'}`}>
+          {isOnline ? 'Online' : 'Offline'}
         </div>
-      )}
-
-      <div className="weather-box">
-        <h3>Weather Details</h3>
-        {weatherLoading ? (
-          <p>Loading weather data...</p>
-        ) : weather ? (
-          <>
-            <p>Temperature: {weather.temp}°C</p>
-            <p>Wind: {weather.wind} km/h</p>
-            <p>Condition: {getWeatherDescription(weather.weatherCode)}</p>
-          </>
-        ) : (
-          <p>Weather data unavailable</p>
-        )}
       </div>
 
-      {isOnline ? (
-        <div
-          ref={mapContainer}
-          className="map-container"
-          style={{ width: "100%", height: "400px" }}
-        />
-      ) : (
-        <div className="offline-box">
-          <h3>Offline Mode</h3>
-          <p>Map not available offline.</p>
+      {isLoading && (
+        <div className="loading">
+          <div className="spinner"></div>
+          <p>Getting your location with high accuracy...</p>
         </div>
       )}
+
+      {error && (
+        <div className="error">
+          <span>⚠️</span> {error}
+        </div>
+      )}
+
+      {location && (
+        <div className="location-info">
+          <h2>Your Current Location</h2>
+          <div className="coordinates">
+            <div className="coordinate">
+              <span className="label">Latitude:</span>
+              <span className="value">{location.latitude.toFixed(6)}</span>
+            </div>
+            <div className="coordinate">
+              <span className="label">Longitude:</span>
+              <span className="value">{location.longitude.toFixed(6)}</span>
+            </div>
+            {accuracy && (
+              <div className="coordinate">
+                <span className="label">Accuracy:</span>
+                <span className="value">±{accuracy.toFixed(2)} meters</span>
+              </div>
+            )}
+          </div>
+          <button onClick={() => getLocation()} className="refresh-btn">
+            Refresh Location
+          </button>
+        </div>
+      )}
+
+      {weather && (
+        <div className="weather-info">
+          <h2>Current Weather</h2>
+          <div className="weather-data">
+            <div className="weather-item">
+              <span className="label">Temperature:</span>
+              <span className="value">{weather.temperature}°C</span>
+            </div>
+            <div className="weather-item">
+              <span className="label">Conditions:</span>
+              <span className="value">{getWeatherDescription(weather.weathercode)}</span>
+            </div>
+            <div className="weather-item">
+              <span className="label">Wind Speed:</span>
+              <span className="value">{weather.windspeed} km/h</span>
+            </div>
+            <div className="weather-item">
+              <span className="label">Wind Direction:</span>
+              <span className="value">{weather.winddirection}°</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {weatherError && (
+        <div className="error">
+          <span>⚠️</span> Weather data unavailable: {weatherError}
+        </div>
+      )}
+
+      <div 
+        ref={mapContainer} 
+        className="map-container"
+        style={{ display: location ? 'block' : 'none' }}
+      />
+
+      {!location && !isLoading && (
+        <div className="no-location">
+          <p>Unable to determine your location. Please check your browser permissions.</p>
+          <button onClick={() => getLocation()} className="refresh-btn">
+            Try Again
+          </button>
+        </div>
+      )}
+
+      <div className="help-section">
+        <h3>Location Accuracy Tips</h3>
+        <ul>
+          <li>Make sure you've granted location permissions to your browser</li>
+          <li>Try using a different browser (Chrome usually has the best geolocation support)</li>
+          <li>Ensure your device's location services are turned on</li>
+          <li>For better accuracy, connect to WiFi or ensure good cellular signal</li>
+          <li>GPS works best outdoors with a clear view of the sky</li>
+        </ul>
+      </div>
     </div>
   );
 };
